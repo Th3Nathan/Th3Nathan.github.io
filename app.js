@@ -271,7 +271,7 @@ const S = {
 };
 
 // ── Staircase ────────────────────────────────────
-const SC_STEPS = [20,16,13,10,8,6,5,4,3];
+const SC_STEPS = [60, 50, 40, 30, 20,16,13,10,8,6,5,4,3];
 const SC = { idx:0, streak:0, lastDir:null, reversals:0 };
 
 function scCents() { return SC_STEPS[SC.idx]; }
