@@ -1314,5 +1314,6 @@ loadEnabled();
 buildIselPanel();
 buildWsSelect();
 tuneInit();
+renderJND();
 document.getElementById('modeDesc').innerHTML = MODE_DESCS['listen'];
 nextQuestion();
