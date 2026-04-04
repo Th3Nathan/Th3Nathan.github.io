@@ -258,7 +258,7 @@ const JI_RATIOS = {
 // STATE
 // ═══════════════════════════════════════════════════
 const S = {
-  pitch:440, timbre:'strings', timing:'sequential',
+  pitch:440, timbre:'strings', timing:'simultaneous',
   mode:'listen', refType:'drone',
   fixedCents:12, wsCents:12, lisCents:16,
   answered:false, played:false,
@@ -298,20 +298,25 @@ function renderJND() {
   const v = scCents();
   const el = document.getElementById('jndVal');
   el.textContent = v + ' ¢';
-  el.className = 'jnd-val' + (SC.idx>=5?' up':SC.idx<=1?' down':'');
-  const lbls = ['starting out','getting harder','building skill','good progress','sharp ears','very sensitive','professional range','elite','extraordinary'];
+  const hi = SC.idx >= Math.floor(SC_STEPS.length * 0.4);
+  const lo = SC.idx <= 1;
+  el.className = 'jnd-val' + (hi?' up':lo?' down':'');
+  const lbls = [
+    'starting out','getting harder','building skill','good progress',
+    'sharp ears','very sensitive','professional range','elite',
+    'extraordinary','master level','world class',
+  ];
   document.getElementById('jndLbl').textContent = lbls[Math.min(SC.idx,lbls.length-1)];
   const pct = (SC.idx/(SC_STEPS.length-1))*100;
   const fill = document.getElementById('scFill');
   fill.style.width = pct+'%';
-  fill.style.background = SC.idx>=5?'var(--intune)':SC.idx<=1?'var(--sharp)':'var(--accent)';
+  fill.style.background = hi?'var(--intune)':lo?'var(--sharp)':'var(--accent)';
 }
 
 // ═══════════════════════════════════════════════════
 // AUDIO ENGINE
 // ═══════════════════════════════════════════════════
-let AC=null, liveNodes=[], refOn=false, listenDroneNodes=[], listenNoteNodes=[];
-let listenNoteTimer=null;
+let AC=null, liveNodes=[], refOn=false;
 // Tune It live nodes — kept separate so frequency can be updated without recreation
 let tuneOscNodes=[];   // [{osc, gainNode}] — oscillators whose frequency we update live
 let tuneDroneNodes=[]; // sustained drone for tune it mode
@@ -330,19 +335,14 @@ function stopAll() {
     try{setTimeout(()=>{try{n.disconnect();}catch(e){}},80);}catch(e){}
   });
   liveNodes=[];
-  listenDroneNodes=[];
-  listenNoteNodes=[];
   tuneDroneNodes=[];
   tuneOscNodes=[];
   S.tuneActive=false;
   tunePhase='idle';
-  if (listenNoteTimer) { clearTimeout(listenNoteTimer); listenNoteTimer=null; }
   refOn=false;
   document.getElementById('refDisp').classList.remove('playing');
   document.getElementById('btnRef').classList.remove('lit');
-  // In listen+sequential the drone button has a different label
-  const listenSeq = S.mode==='listen' && S.timing==='sequential';
-  document.getElementById('btnRef').textContent = listenSeq ? '♩\u00A0 Play Drone' : refBtnLabel(false);
+  document.getElementById('btnRef').textContent = refBtnLabel(false);
   document.getElementById('btnTest').classList.remove('lit');
   ['btnRW','btnRR','btnLisWrong','btnLisRight'].forEach(id=>{
     const el=document.getElementById(id);
@@ -857,56 +857,7 @@ function playTestOnly() {
 }
 
 // ── Listen mode playback ──────────────────────────
-// Each button toggles: first press plays, second press stops.
-// Sequential timing: drone plays alone first, then test pitch follows.
-// Simultaneous timing: drone + test pitch play together.
-
-// ── Listen mode playback ──────────────────────────
-// Sequential: btnRef toggles the sustained drone. Out of Tune / In Tune
-//   fire a single short note against the ringing drone.
-// Simultaneous: each button plays drone + note together as one event.
-
-function listenStopDrone() {
-  const c = getCtx(), now = c.currentTime;
-  listenDroneNodes.forEach(n => {
-    try { if (n.gain) { n.gain.cancelScheduledValues(now); n.gain.setValueAtTime(0, now); } } catch(e){}
-    try { n.stop(now + 0.03); } catch(e){}
-    try { setTimeout(()=>{ try { n.disconnect(); } catch(e){} }, 80); } catch(e){}
-  });
-  listenDroneNodes = [];
-}
-
-function stopListenNote() {
-  if (listenNoteTimer) { clearTimeout(listenNoteTimer); listenNoteTimer=null; }
-  const c = getCtx(), now = c.currentTime;
-  listenNoteNodes.forEach(n => {
-    try { if (n.gain) { n.gain.cancelScheduledValues(now); n.gain.setValueAtTime(0, now); } } catch(e){}
-    try { n.stop(now + 0.03); } catch(e){}
-    try { setTimeout(()=>{ try { n.disconnect(); } catch(e){} }, 80); } catch(e){}
-  });
-  listenNoteNodes = [];
-  // Remove note nodes from liveNodes too
-  liveNodes = liveNodes.filter(n => !listenNoteNodes.includes(n));
-}
-
-function listenToggleDrone() {
-  // Called by btnRef in listen+sequential mode
-  const btn = document.getElementById('btnRef');
-  if (btn.classList.contains('lit')) {
-    listenStopDrone();
-    btn.classList.remove('lit');
-    btn.textContent = '♩\u00A0 Play Drone';
-    document.getElementById('refDisp').classList.remove('playing');
-    document.getElementById('listenStatus').textContent = 'Drone stopped. Press Play Drone to resume.';
-  } else {
-    btn.classList.add('lit');
-    btn.textContent = '◼\u00A0 Stop Drone';
-    document.getElementById('refDisp').classList.add('playing');
-    document.getElementById('listenStatus').textContent = 'Drone playing — press Out of Tune or In Tune to hear each note.';
-    S.q.refFreqs.forEach(f => { listenDroneNodes.push(...toneSus(f, S.timbre, false)); });
-    liveNodes.push(...listenDroneNodes);
-  }
-}
+// Each button plays drone + note together (simultaneous).
 
 function listenPlay(which) {
   const btnId = which==='wrong' ? 'btnLisWrong' : 'btnLisRight';
@@ -914,63 +865,29 @@ function listenPlay(which) {
   const freq = which==='wrong' ? S.q.wrongFreq : S.q.justFreq;
   const label = which==='wrong' ? '← Out of tune' : '← In tune';
 
-  // Toggle off if already playing
   const isActive = document.getElementById(btnId).classList.contains('lit');
-
-  if (S.timing === 'sequential') {
-    // Note buttons are completely independent from the drone.
-    // They only start/stop the test pitch — drone is unaffected.
-    if (isActive) {
-      // Stop just the note nodes
-      stopListenNote();
-      document.getElementById(btnId).classList.remove('lit');
-      document.getElementById('listenStatus').textContent = 'Stopped.';
-      return;
-    }
-    // Stop any currently playing note (not drone), then play new one
-    stopListenNote();
-    document.getElementById(btnId).classList.add('lit');
-    document.getElementById(otherBtnId).classList.remove('lit');
-    document.getElementById('listenStatus').textContent = label;
-    const dur = 2.5;
-    const noteNodes = toneDur(freq, dur, S.timbre, false);
-    listenNoteNodes.push(...noteNodes);
-    liveNodes.push(...noteNodes);
-    listenNoteTimer = setTimeout(() => {
-      document.getElementById(btnId).classList.remove('lit');
-      if (which === 'right') {
-        document.getElementById('listenStatus').textContent = 'Good. Press Next when ready, or keep comparing.';
-        document.getElementById('btnNext').disabled = false;
-      } else {
-        document.getElementById('listenStatus').textContent = 'Now press In Tune to compare.';
-      }
-    }, dur * 1000);
-
-  } else {
-    // Simultaneous: stop everything, play drone + note together
-    stopAll();
-    if (isActive) {
-      document.getElementById('listenStatus').textContent = 'Stopped. Press either button to listen again.';
-      return;
-    }
-    document.getElementById(btnId).classList.add('lit');
-    document.getElementById(otherBtnId).classList.remove('lit');
-    document.getElementById('refDisp').classList.add('playing');
-    document.getElementById('listenStatus').textContent = label;
-    const dur = 3.0;
-    S.q.refFreqs.forEach(f => { liveNodes.push(...toneDur(f, dur, S.timbre, false)); });
-    liveNodes.push(...toneDur(freq, dur, S.timbre, false));
-    setTimeout(() => {
-      document.getElementById(btnId).classList.remove('lit');
-      document.getElementById('refDisp').classList.remove('playing');
-      if (which === 'right') {
-        document.getElementById('listenStatus').textContent = 'Good. Press Next when ready, or compare again.';
-        document.getElementById('btnNext').disabled = false;
-      } else {
-        document.getElementById('listenStatus').textContent = 'Now press In Tune to compare.';
-      }
-    }, dur * 1000);
+  stopAll();
+  if (isActive) {
+    document.getElementById('listenStatus').textContent = 'Stopped. Press either button to listen again.';
+    return;
   }
+  document.getElementById(btnId).classList.add('lit');
+  document.getElementById(otherBtnId).classList.remove('lit');
+  document.getElementById('refDisp').classList.add('playing');
+  document.getElementById('listenStatus').textContent = label;
+  const dur = 3.0;
+  S.q.refFreqs.forEach(f => { liveNodes.push(...toneDur(f, dur, S.timbre, false)); });
+  liveNodes.push(...toneDur(freq, dur, S.timbre, false));
+  setTimeout(() => {
+    document.getElementById(btnId).classList.remove('lit');
+    document.getElementById('refDisp').classList.remove('playing');
+    if (which === 'right') {
+      document.getElementById('listenStatus').textContent = 'Good. Press Next when ready, or compare again.';
+      document.getElementById('btnNext').disabled = false;
+    } else {
+      document.getElementById('listenStatus').textContent = 'Now press In Tune to compare.';
+    }
+  }, dur * 1000);
 }
 
 function listenPlayWrong() { listenPlay('wrong'); }
@@ -1093,8 +1010,7 @@ function hideFeedback() {
 // ═══════════════════════════════════════════════════
 function refBtnLabel(playing) {
   const stop = playing ? '◼\u00A0' : '♩\u00A0';
-  if (S.timing==='simultaneous') return stop+'Play Interval';
-  return stop+(S.q&&S.q.tmpl.isDrone ? 'Play Drone' : 'Play Reference');
+  return stop+'Play Interval';
 }
 
 function enableAnswers()  { ['btnFlat','btnInTune','btnSharp'].forEach(id=>document.getElementById(id).disabled=false); }
@@ -1156,20 +1072,11 @@ function nextQuestion() {
     document.getElementById('coachNote').style.display='none';
   }
 
-  // In listen+sequential: show btnRef as drone toggle, hide btnTest
-  // In listen+simultaneous: hide both (listen buttons handle everything)
-  // In judge modes: normal behaviour
-  const listenSeq = S.mode==='listen' && S.timing==='sequential';
-  const listenSimul = S.mode==='listen' && S.timing==='simultaneous';
-  const isTune = S.mode==='tuneit';
-  document.getElementById('btnRef').textContent = listenSeq ? '♩\u00A0 Play Drone' : isTune ? '♩\u00A0 Play Interval' : refBtnLabel(false);
-  document.getElementById('btnRef').onclick = listenSeq ? listenToggleDrone : playReference;
-  document.getElementById('btnRef').style.display = listenSimul ? 'none' : '';
+  document.getElementById('btnRef').textContent = refBtnLabel(false);
+  document.getElementById('btnRef').onclick = playReference;
+  document.getElementById('btnRef').style.display = S.mode==='listen' ? 'none' : '';
 
-  // Hide timing row in tuneit mode — always simultaneous
-  document.getElementById('timingRow').style.display = S.mode==='tuneit' ? 'none' : '';
-  // Sequential non-listen/non-tuneit: show test pitch button. Hide otherwise.
-  document.getElementById('btnTest').style.display = (S.timing==='sequential' && S.mode!=='listen' && S.mode!=='tuneit') ? '' : 'none';
+  document.getElementById('btnTest').style.display = 'none';
 
   document.getElementById('btnNext').disabled = (S.mode==='woodshed');
 
@@ -1182,11 +1089,7 @@ function nextQuestion() {
 
   // Listen mode: reset state
   if (S.mode==='listen') {
-    listenStopDrone();
-    const seq = S.timing==='sequential';
-    document.getElementById('listenStatus').textContent = seq
-      ? 'Press Play Drone to start the drone, then use Out of Tune / In Tune to hear each note.'
-      : 'Press Out of Tune or In Tune to hear each version together with the drone.';
+    document.getElementById('listenStatus').textContent = 'Press Out of Tune or In Tune to hear each version together with the drone.';
     document.getElementById('btnLisWrong').disabled=false;
     document.getElementById('btnLisRight').disabled=false;
     document.getElementById('btnNext').disabled=true;
@@ -1254,13 +1157,9 @@ function setRefType(val, btn) {
   nextQuestion();
 }
 
-// fix #3: sequential default for drone
 function setTiming(val, btn) {
   S.timing=val;
-  document.querySelectorAll('#tSimul,#tSeq').forEach(b=>b.classList.remove('on'));
-  document.getElementById(val==='simultaneous'?'tSimul':'tSeq').classList.add('on');
   if(btn){btn.closest('.seg').querySelectorAll('button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');}
-  document.getElementById('btnTest').style.display = val==='sequential' ? '' : 'none';
   stopAll();
 }
 
@@ -1416,7 +1315,4 @@ buildIselPanel();
 buildWsSelect();
 tuneInit();
 document.getElementById('modeDesc').innerHTML = MODE_DESCS['listen'];
-// Sequential default active (fix #3)
-document.getElementById('tSeq').classList.add('on');
-document.getElementById('tSimul').classList.remove('on');
 nextQuestion();
